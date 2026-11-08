@@ -1,5 +1,34 @@
 import {APIError} from "./error";
 import {FastifyInstance} from "fastify";
+import {responseHeaders} from './response-headers';
+import {
+  STAR_DATA_INCIDENT_MARKER,
+  STAR_DATA_UNAVAILABLE_MARKER,
+  getPublicApiDataQuality,
+} from "./data-quality";
+
+export function publicDataServiceTarget(template: string, query: Record<string, unknown>, params: Record<string, unknown>): string {
+  if (!/^\/(?:v1|public)\//.test(template) || template.includes('*')) {
+    throw new APIError(500, 'Invalid public route configuration.');
+  }
+  const pathname = template.split('/').filter(part => part && !part.startsWith(':')).slice(1).join('/');
+  const search = new URLSearchParams();
+  if (Object.keys(query).length > 50) throw new APIError(400, 'Too many query parameters.');
+  for (const [key, value] of Object.entries(query)) {
+    const values = Array.isArray(value) ? value : [value];
+    if (values.length > 100 || values.some(item => !['string', 'number', 'boolean'].includes(typeof item)) || String(value).length > 2000) {
+      throw new APIError(400, 'Invalid query parameter.');
+    }
+    search.set(key, String(value));
+  }
+  for (const [key, value] of Object.entries(params)) {
+    if (!/^[A-Za-z0-9_.-]{1,100}$/.test(String(value)) || value === '.' || value === '..') {
+      throw new APIError(400, 'Invalid route parameter.');
+    }
+    search.set(key, String(value));
+  }
+  return `/${pathname}?${search}`;
+}
 
 export function proxyGet(
   app: FastifyInstance,
@@ -19,48 +48,69 @@ export function proxyGet(
         throw new APIError(500, 'TiDB data service is not initialized.');
       }
 
-      // Remove prefix and query string from url.
-      const url = new URL(req.url, 'http://localhost');
-      let pathname = url.pathname.replace(/^\/(public|v1)/, '');
-      
+      // Derive the credentialed upstream route only from our registered template.
+      const targetURL = publicDataServiceTarget(req.routeOptions.url || '', req.query as any, req.params as any);
+      const pathname = targetURL.split('?')[0];
+      const collectionId = (req.params as Record<string, unknown>).collection_id;
+      if (collectionId !== undefined) await app.collectionService.assertPublicCollection(collectionId);
 
-      // Map query params to query strings.
-      const query = req.query as any;
-      const queryKeys = Object.keys(query);
-      const queryStrings = [];
-      queryStrings.push(...queryKeys.map((queryKey) => {
-        return `${queryKey}=${encodeURIComponent(query[queryKey])}`;
-      }));
-
-      // Remove path params from url.
-      const params = req.params as any;
-      const paramKeys = Object.keys(params);
-      for (const paramKey of paramKeys) {
-        pathname = pathname.replace(`/${params[paramKey]}`, '');
-      }
-
-      // TODO: remove it after TiDB data service supports path params.
-      // Map path params to query strings.
-      queryStrings.push(...paramKeys.map((paramKey) => {
-        return `${paramKey}=${encodeURIComponent(params[paramKey])}`;
-      }));
-
-      // Remove trailing slash from url.
-      //
-      // Notice: Data Service is strict in path routing.
-      // If there is / at the end of the path, the route cannot be matched correctly.
-      if (pathname.endsWith('/')) {
-        pathname = pathname.slice(0, -1);
+      // Star-data incident gate (see ./data-quality). proxyGet talks to TiDB
+      // Data Service directly, so QueryRunner's gate never sees these routes;
+      // without this check every /v1 ranking would keep serving noise.
+      const dataQuality = getPublicApiDataQuality(pathname);
+      if (dataQuality === 'blocked') {
+        // HTTP 200 with an explicit `unavailable` envelope, not 5xx: ~470 public
+        // repositories reference api.ossinsight.io, and an error status would
+        // break those integrations and fire their alerting for a known data
+        // condition. The empty `rows` must not be read as "no results" - that is
+        // what `status: "unavailable"` is for.
+        // .serializer() bypasses the route's response schema, which otherwise
+        // strips data_quality: the schema describes the upstream Data Service
+        // shape and has no property for it, so Fastify would silently drop the
+        // one field that explains why rows is empty.
+        reply
+          .code(200)
+          .header('Cache-Control', 'no-store')
+          .header('Warning', '199 - "degraded data: star-event derived ranking unavailable"')
+          .type('application/json; charset=utf-8')
+          .serializer((payload: unknown) => JSON.stringify(payload))
+          .send({
+            type: 'sql_endpoint',
+            data: { columns: [], rows: [], result: { row_count: 0 } },
+            data_quality: STAR_DATA_UNAVAILABLE_MARKER,
+          });
+        return;
       }
 
       // Retrieve query result from TiDB data service.
-      const targetURL = `${pathname}?${queryStrings.join('&')}`;     
       const res = await app.tidbDataService.request(targetURL);
       delete res.headers['transfer-encoding'];
+      if (pathname === '/collections' || pathname === '/collections/hot') {
+        const visible = await app.collectionService.getCollections();
+        const ids = new Set(visible.data.map(collection => String(collection.id)));
+        if (!Array.isArray(res.data?.data?.rows)) throw new APIError(502, 'Invalid upstream response.');
+        const rows = res.data.data.rows.filter((row: any) => ids.has(String(row.id ?? row.collection_id)));
+        res.data = {...res.data, data: {...res.data.data, rows, result: {...res.data.data.result, row_count: rows.length}}};
+        delete res.headers['content-length'];
+      }
+
+      if (dataQuality === 'tainted') {
+        const body = typeof res.data === 'object' && res.data !== null
+          ? { ...res.data, data_quality: STAR_DATA_INCIDENT_MARKER }
+          : res.data;
+        delete res.headers['content-length'];
+        reply
+          .code(res.status)
+          .headers(responseHeaders(res.headers))
+          .header('Warning', '199 - "degraded data: event-derived counts are lower bounds"')
+          .serializer((payload: unknown) => JSON.stringify(payload))
+          .send(body);
+        return;
+      }
 
       reply
         .code(res.status)
-        .headers(res.headers)
+        .headers(responseHeaders(res.headers))
         .send(res.data);
     })
 }

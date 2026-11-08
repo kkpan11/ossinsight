@@ -1,10 +1,3 @@
----
-title: Contributing to OSS Insight
-tags: [contribution]
-description: We welcome your contributions here! 
-keywords: [contribute]
----
-
 # Contributing to OSS Insight
 
 If you're interested in contributing to OSS Insight, hopefully, this document makes the process for contributing clear.
@@ -18,7 +11,7 @@ There are many ways to contribute to OSS Insight, and many of them do not involv
   - Does everything work as expected? If not, we're always looking for improvements. Let us know by [**opening an issue**](https://github.com/pingcap/ossinsight/blob/main/CONTRIBUTING.md#issue).
 - If you want to add a collection on our OSS Insight website, you can also [**add a collection**](https://github.com/pingcap/ossinsight/blob/main/CONTRIBUTING.md#add-a-collection) by submitting PRs.
 - Look through the [open issues](https://github.com/pingcap/ossinsight/issues). Provide workarounds, ask for clarification, or suggest labels. If you find an issue you would like to fix, [**open a pull request**](https://github.com/pingcap/ossinsight/blob/main/CONTRIBUTING.md#pull-requests). 
-- Read through the [OSS Insight Blogs](https://ossinsight.io/blog/). If you find anything that is confusing or can be improved, you can click "Edit this page" at the bottom of most docs, which takes you to the GitHub interface to make and propose changes.
+- Read through the [OSS Insight Blogs](https://ossinsight.io/blog/). If you find anything that is confusing or can be improved, feel free to open a PR.
 - If you have message or experience about using OSS Insight, you are welcome to [**add a new blog**](https://github.com/pingcap/ossinsight/blob/main/CONTRIBUTING.md#add-a-blog).
 
 
@@ -43,9 +36,14 @@ If you would like to request a new feature or enhancement but are not yet thinki
 
 ## Development 
 
-- Step 1 `cd web`
-- Step 2 `npm install`
-- Step 3 `npm start`, then your website will run at: http://localhost:3000/
+This is a pnpm monorepo. To run the website locally:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+The web app will run at http://localhost:3001/ by default.
 
 ## Pull Request
 
@@ -61,13 +59,14 @@ Please add the scope of pull request as the title prefix like:
 <scope>: what's changed.
 ```
 
-The scope cloud be `config`, `api`, `web`, `blog` and etc.
+The scope could be `config`, `web`, `docs`, `etl`, `scripts` and etc.
 
 The various types of commits:
 - `config`: a new collection, etc.
-- `api`: a new API for the end user, etc.
 - `web`: a change about website, etc.
-- `blog`: a change about blogs, etc.
+- `docs`: a change about documentation, etc.
+- `etl`: a change about data pipeline, etc.
+- `scripts`: a change about utility scripts, etc.
 
 Do not get too stressed about PR titles, however. Your code is more important than conventions!
 
@@ -83,13 +82,13 @@ You can add a collection on OSS Insight website by submitting PRs.
 
 The following is a file template for a collection that describes what you need to include.
 
-Please create a `.yml` file under [the collections file path]( https://github.com/pingcap/ossinsight/tree/main/etl/meta/collections).
+Please create a `.yml` file under [the collections file path]( https://github.com/pingcap/ossinsight/tree/main/configs/collections).
 
 * File Name
 
 `<collection_id>.<collection_name>.yml`, For example: `10013.game-engine.yml`
 
-  💡 Tips: Please use `100XX` as your collection's id，and it should be `+1` after the latest submit in [here]( https://github.com/pingcap/ossinsight/tree/main/etl/meta/collections). 
+  💡 Tips: Please use `100XX` as your collection's id，and it should be `+1` after the latest submit in [here]( https://github.com/pingcap/ossinsight/tree/main/configs/collections). 
 
 * Content
 
@@ -101,13 +100,19 @@ items:
   - <repo_name_2>
 ```
 
+You can validate your collection config locally before submitting:
+
+```bash
+node scripts/verify-collection.mjs --fix-suggestions
+```
+
 ## Add a blog
 
 You can add a blog on OSS Insight website by submitting PRs. 
 
 Here is a folder template for a blog provides guidance on the information you need to include.
 
-Please create a folder under [the blog file path]( https://github.com/pingcap/ossinsight/tree/main/web/blog), and create a `.md` file under the folder.
+Please create a folder under [`apps/docs/content/blog/`]( https://github.com/pingcap/ossinsight/tree/main/apps/docs/content/blog), and create a `.md` file under the folder.
 
 * Folder Name: describe the text briefly
 

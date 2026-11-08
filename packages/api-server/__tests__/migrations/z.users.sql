@@ -10,11 +10,15 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.sys_repo_milestones TO 'ex
 GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.sys_repo_milestone_types TO 'executoruser'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.sys_sent_repo_milestones TO 'executoruser'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.stats_query_summary TO 'executoruser'@'%';
-GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.stats_api_requests TO 'executoruser'@'%';
+GRANT SELECT, INSERT ON gharchive_dev.stats_api_requests TO 'executoruser'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.explorer_questions TO 'executoruser'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON gharchive_dev.explorer_recommend_questions TO 'executoruser'@'%';
 
 CREATE USER IF NOT EXISTS 'webshelluser'@'%' IDENTIFIED BY 'webshellpassword';
-GRANT SELECT ON *.* TO 'webshelluser'@'%';
+GRANT SELECT ON gharchive_dev.github_events TO 'webshelluser'@'%';
+GRANT SELECT ON gharchive_dev.github_repos TO 'webshelluser'@'%';
+GRANT SELECT ON gharchive_dev.github_users TO 'webshelluser'@'%';
+GRANT SELECT ON gharchive_dev.github_repo_topics TO 'webshelluser'@'%';
+GRANT SELECT ON gharchive_dev.trending_repos TO 'webshelluser'@'%';
 
 FLUSH PRIVILEGES;

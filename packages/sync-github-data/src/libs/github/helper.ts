@@ -1,4 +1,4 @@
-import {GitHubRepoNode, GitHubUserNode} from "@typings/github";
+import {GitHubRepoNode, GitHubRepoStarCountNode, GitHubUserNode} from "@typings/github";
 import {Pool as GenericPool} from "generic-pool";
 import {DateTime} from "luxon";
 import {Octokit} from "octokit";
@@ -39,7 +39,7 @@ export class GitHubHelper {
   // TODO: Add metrics for rate limit and cost time.
   async queryWithGQL<R>(gql: any, variables?: Record<string, any>): Promise<R | null> {
     return await this.octokitPool.use(async (octokit) => {
-      this.logger.debug({variables}, `Executing graphql query.`);
+      this.logger.debug({variableCount: Object.keys(variables ?? {}).length}, `Executing graphql query.`);
       const start = DateTime.now();
       const res = await octokit.graphql(gql, variables) as any;
       const end = DateTime.now();
@@ -47,7 +47,7 @@ export class GitHubHelper {
       const costPoints = res.rateLimit?.cost || null;
       const remainPoints = res.rateLimit?.remaining || null;
       this.logger.debug({
-        variables,
+        variableCount: Object.keys(variables ?? {}).length,
         costPoints,
         remainPoints,
         costTime
@@ -108,7 +108,7 @@ export class GitHubHelper {
       fetchedNodes += search?.nodes.length;
       searchResult.push(...search?.nodes);
 
-      this.logger.debug({variables}, `Fetched ${fetchedNodes}/${foundNodes} nodes.`);
+      this.logger.debug({variableCount: Object.keys(variables ?? {}).length}, `Fetched ${fetchedNodes}/${foundNodes} nodes.`);
 
       if (foundNodes > GITHUB_MAX_SEARCH_NODES) {
         return [true, searchResult];
@@ -405,15 +405,101 @@ export class GitHubHelper {
     return res.node;
   }
 
+  /**
+   * Fetch the current stargazer / fork totals for multiple repos in a single GraphQL
+   * request by aliasing one `repository(owner:..., name:...)` field per repo
+   * (~10 repos per rate-limit point).
+   *
+   * Repos that no longer resolve (deleted, made private, renamed without redirect)
+   * are reported in `missing` instead of failing the whole batch: GitHub answers such
+   * aliases with `null` plus a NOT_FOUND error, and octokit raises a GraphqlResponseError
+   * that still carries the partial data for the aliases that did resolve.
+   *
+   * @param repoNames Repo names in `{owner}/{repo}` format.
+   * @returns Resolved nodes keyed by the REQUESTED repo name (renames follow the
+   *          redirect, so `nameWithOwner` in the node may differ), plus the list of
+   *          repo names that could not be resolved.
+   */
+  async batchGetRepoStarCounts(repoNames: string[]): Promise<{nodes: Map<string, GitHubRepoStarCountNode>, missing: string[]}> {
+    const nodes = new Map<string, GitHubRepoStarCountNode>();
+    const missing: string[] = [];
+
+    const aliases: Array<[alias: string, repoName: string]> = [];
+    const fields: string[] = [];
+    repoNames.forEach((repoName, index) => {
+      const parts = repoName.split('/');
+      if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        this.logger.warn('Skip malformed repository name.');
+        missing.push(repoName);
+        return;
+      }
+
+      const alias = `repo${index}`;
+      aliases.push([alias, repoName]);
+      // JSON.stringify produces a valid, escaped GraphQL string literal.
+      fields.push(`${alias}: repository(owner: ${JSON.stringify(parts[0])}, name: ${JSON.stringify(parts[1])}) {
+        databaseId
+        nameWithOwner
+        stargazerCount
+        forkCount
+      }`);
+    });
+
+    if (fields.length === 0) {
+      return {nodes, missing};
+    }
+
+    const gql = `
+      query {
+        ${fields.join('\n')}
+        rateLimit {
+          limit
+          cost
+          remaining
+          resetAt
+        }
+      }
+    `;
+
+    let res: any;
+    try {
+      res = await this.queryWithGQL<any>(gql);
+    } catch (err: any) {
+      if (err?.data) {
+        // Partial response: keep what resolved, the unresolved aliases fall through
+        // to the `missing` list below.
+        this.logger.warn('Some repositories in the batch could not be resolved.');
+        res = err.data;
+      } else {
+        throw err;
+      }
+    }
+
+    for (const [alias, repoName] of aliases) {
+      const node = res?.[alias];
+      if (node && typeof node.databaseId === 'number' && typeof node.stargazerCount === 'number') {
+        nodes.set(repoName, node);
+      } else {
+        missing.push(repoName);
+      }
+    }
+
+    return {nodes, missing};
+  }
+
   async getUserRepoIds(login: string): Promise<number[]> {
     return await this.octokitPool.use(async (octokit) => {
-      const repoIterator = await octokit.paginate.iterator(octokit.rest.repos.listForUser, {
+      // NOTE: the `as any` casts work around a fresh-install type breakage:
+      // octokit ^2 resolves plugins bundling different @octokit/types majors
+      // (9 vs 10), whose paginate overloads reject each other. Runtime behavior
+      // is unchanged.
+      const repoIterator = await octokit.paginate.iterator(octokit.rest.repos.listForUser as any, {
         username: login,
       });
 
       const repoIds: any[] = [];
       for await (const repo of repoIterator) {
-        repo.data.forEach((r) => {
+        repo.data.forEach((r: any) => {
           repoIds.push(r.id);
         });
       }
@@ -423,13 +509,14 @@ export class GitHubHelper {
 
   async getOrgRepoIds(login: string): Promise<number[]> {
     return await this.octokitPool.use(async (octokit) => {
-      const repoIterator = await octokit.paginate.iterator(octokit.rest.repos.listForOrg, {
+      // NOTE: see getUserRepoIds for why the `as any` casts are needed.
+      const repoIterator = await octokit.paginate.iterator(octokit.rest.repos.listForOrg as any, {
         org: login,
       });
 
       const repoIds: any[] = [];
       for await (const repo of repoIterator) {
-        repo.data.forEach((r) => {
+        repo.data.forEach((r: any) => {
           repoIds.push(r.id);
         });
       }

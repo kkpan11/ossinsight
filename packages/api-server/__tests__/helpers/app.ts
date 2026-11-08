@@ -23,12 +23,9 @@ async function createApp () {
   const redis = getTestRedis();
 
   // Override process env
-  const playgroundDatabaseURL = db.url()
-      .replace('executoruser', 'webshelluser')
-      .replace('executorpassword', 'webshellpassword');
+  const playgroundDatabaseURL = db.analyticsUrl();
   const env: Partial<Env> = {
     CONFIGS_PATH: path.resolve(__dirname, '../../../../configs'),
-    ADMIN_EMAIL: 'admin@testdomain.com',
     DATABASE_URL: db.url(),
     REDIS_URL: redis.url(),
     // This should be used for oauth redirect only
@@ -37,7 +34,6 @@ async function createApp () {
     GITHUB_ACCESS_TOKENS: process.env.GITHUB_TOKEN ?? '',
     PLAYGROUND_DATABASE_URL: playgroundDatabaseURL,
     PLAYGROUND_DAILY_QUESTIONS_LIMIT: 30,
-    PLAYGROUND_TRUSTED_GITHUB_LOGINS: 'testuser',
     EXPLORER_USER_MAX_QUESTIONS_PER_HOUR: 3,
     EXPLORER_USER_MAX_QUESTIONS_ON_GOING: 1,
     EXPLORER_GENERATE_SQL_CACHE_TTL: 60 * 60 * 24 * 7,
